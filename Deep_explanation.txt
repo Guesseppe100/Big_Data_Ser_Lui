@@ -1,0 +1,155 @@
+Deep explanation
+
+This DAG is an incremental ELT pipeline.
+
+ELT means:
+
+Extract: read the CSV files from the staging folder
+
+Load: put the raw file content into staging_raw
+
+Transform: clean, standardize, deduplicate, and merge the data into fact_finanzas_elt
+
+The most important part of your design is that it is incremental, not full refresh.
+
+1. processed_files is the control brain of the pipeline
+
+This table remembers which files were already processed.
+
+It stores:
+
+the file name
+
+full path
+
+file size
+
+last modified timestamp
+
+when the pipeline processed it
+
+That means the pipeline does not just ask, “Have I seen finanzas_mes_8.csv before?”
+It asks a stronger question:
+
+“Have I seen this exact version of finanzas_mes_8.csv before?”
+
+That is why it compares:
+
+file_name
+
+file_size_bytes
+
+file_modified_at
+
+If any of those change, the file is considered new or modified.
+
+2. staging_raw is temporary and per-run
+
+This table is dropped every time because it is just a landing area for the current execution.
+
+It is not supposed to be historical.
+Its purpose is only to hold the current batch of new or changed CSV rows before transformation.
+
+3. fact_finanzas_elt is historical
+
+This is your final cumulative table.
+
+It stores cleaned business data:
+
+id
+
+salario
+
+gastos
+
+fecha
+
+correo_hash
+
+utilidad
+
+source_file
+
+timestamps for load/update
+
+This table grows over time and preserves history.
+
+4. Your merge logic uses (id, fecha) as the business key
+
+That means a row is considered the same business record if both values match:
+
+id
+
+fecha
+
+Then the pipeline does one of two things:
+
+if (id, fecha) is not in the fact table yet, it inserts the row
+
+if (id, fecha) already exists but values changed, it updates the row
+
+This is a classic incremental merge pattern.
+
+5. The transformation step does four important business operations
+
+First, it normalizes dates.
+Your CSV files may contain dates in different formats, so the code standardizes them into a real SQL DATE.
+
+Second, it fills missing expenses with zero using COALESCE(gastos, 0).
+
+Third, it hashes the email using sha256, which is good because it avoids storing raw personal email values in the fact table.
+
+Fourth, it calculates utilidad as:
+
+salario - gastos
+6. The filtering rules define data quality
+
+Only rows that satisfy all of these conditions move forward:
+
+id IS NOT NULL
+
+fecha IS NOT NULL
+
+salario > 0
+
+gastos >= 0
+
+So invalid or incomplete records are excluded before reaching the final fact table.
+
+7. Deduplication happens inside the current batch
+
+If the same (id, fecha) appears more than once in the same staging batch, the code keeps only one row using ROW_NUMBER().
+
+That prevents duplicate business keys in the temporary transformed dataset.
+
+8. Monitoring metrics help validate the run
+
+The last task calculates:
+
+total rows
+
+average utilidad
+
+maximum utilidad
+
+That is useful for a quick sanity check after each load.
+
+What happens when you add finanzas_mes_8.csv
+
+When the new file appears in /opt/airflow/staging:
+
+the DAG scans the folder
+
+compares its metadata against processed_files
+
+sees that this file version is new
+
+loads only that file into staging_raw
+
+transforms the rows
+
+inserts or updates records in fact_finanzas_elt
+
+records finanzas_mes_8.csv in processed_files
+
+If you rerun the DAG again without changing the file, it should skip it.
