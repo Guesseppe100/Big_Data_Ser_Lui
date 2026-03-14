@@ -1,0 +1,8 @@
+{
+  "name": "airflow_duckdb_env",
+  "image": "mcr.microsoft.com/devcontainers/python:3.11",
+  "features": {
+    "ghcr.io/devcontainers/features/docker-in-docker:1": {}
+  },
+  "postCreateCommand": "pip install apache-airflow==2.9.0 duckdb sqlalchemy-duckdb --constraint https://raw.githubusercontent.com/apache/airflow/constraints-2.9.0/constraints-3.11.txt"
+}
